@@ -468,7 +468,9 @@ namespace Kil0bitSystemMonitor
                     if (item == null) return 0;
                     // Use the reserve string width when available so the column never resizes on value change
                     float valW = item.Reserve != null ? GetCachedMeasure(item.Reserve, font) : GetCachedMeasure(item.Value, font);
-                    return GetCachedMeasure(item.Label, font) + gap + valW;
+                    float lblW = GetCachedMeasure(item.Label, font);
+                    // No gap when the row is label-only or value-only (e.g. the VRAM column)
+                    return lblW + (lblW > 0 && valW > 0 ? gap : 0) + valW;
                 }
 
                 widths[i] = Math.Max(GetItemWidth(col.Top), GetItemWidth(col.Bottom)) + (pad * 2);
@@ -530,8 +532,8 @@ namespace Kil0bitSystemMonitor
 
                 Action<MetricItem, float> drawItem = (item, y) => {
                     float lw = GetCachedMeasure(item.Label, font);
-                    _offscreenGraphics.DrawString(item.Label, font, sectionLBrush, contentX, y);
-                    _offscreenGraphics.DrawString(item.Value, font, sectionVBrush, contentX + lw + gap, y);
+                    if (item.Label.Length > 0) _offscreenGraphics.DrawString(item.Label, font, sectionLBrush, contentX, y);
+                    if (item.Value.Length > 0) _offscreenGraphics.DrawString(item.Value, font, sectionVBrush, contentX + (lw > 0 ? lw + gap : 0), y);
                 };
 
                 if (col.Top != null && col.Bottom != null)
@@ -584,19 +586,22 @@ namespace Kil0bitSystemMonitor
 
             if (c.ShowVram)
             {
-                MetricItem vram;
+                // VRAM gets its own column: "VRAM" label on the top row, the value on the bottom row
+                // (requested by the maintainer on PR #50 so the wide used/total string doesn't stretch a label row).
+                MetricItem vramValue;
                 if (m.VramTotalBytes > 0 && (c.VramDisplayStyle ?? "Percent") == "Used / Total")
                 {
                     float usedGb = m.VramUsedBytes / 1073741824f;
                     float totalGb = m.VramTotalBytes / 1073741824f;
                     // Reserve the used field at full capacity so the column never resizes
-                    vram = new MetricItem { Label = compact ? "V" : "VRM", Value = $"{usedGb:F1}/{totalGb:F1} GB", Reserve = $"{totalGb:F1}/{totalGb:F1} GB" };
+                    vramValue = new MetricItem { Value = $"{usedGb:F1}/{totalGb:F1} GB", Reserve = $"{totalGb:F1}/{totalGb:F1} GB" };
                 }
                 else
                 {
-                    vram = new MetricItem { Label = compact ? "V" : "VRM", Value = m.VramTotalBytes > 0 ? $"{(int)m.VramPercent}%" : "N/A", Reserve = "100%" };
+                    vramValue = new MetricItem { Value = m.VramTotalBytes > 0 ? $"{(int)m.VramPercent}%" : "N/A", Reserve = "100%" };
                 }
-                list.Add((vram, null, SectionGpu));
+                var vramLabel = new MetricItem { Label = compact ? "VRM" : "VRAM" };
+                list.Add((vramLabel, vramValue, SectionGpu));
             }
 
             if (c.ShowDisk || c.ShowDiskSpeed)
