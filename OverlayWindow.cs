@@ -28,6 +28,7 @@ namespace Kil0bitSystemMonitor
         private bool _trackingMouse = false;
         private bool _shellFullscreen = false;
         private bool _appbarRegistered = false;
+        private readonly uint _taskbarCreatedMsg = Win32Helper.RegisterWindowMessage("TaskbarCreated");
         private readonly Action<SystemMetrics>? _onMetricsUpdated;
         private readonly System.ComponentModel.PropertyChangedEventHandler? _onConfigPropertyChanged;
         private uint _currentDpi = 96;
@@ -210,6 +211,10 @@ namespace Kil0bitSystemMonitor
         {
             _dispatcher.BeginInvoke(() =>
             {
+                // Snapping relies on the taskbar owning the overlay. That link is missing if the overlay was created
+                // before Explorer's taskbar existed at logon, and is cleared when Explorer recreates the taskbar.
+                if (_config.Config.StickToTaskbar) EnsureAttachedToTaskbar();
+
                 bool show = ShouldShowOverlay();
 
                 if (show)
@@ -260,6 +265,17 @@ namespace Kil0bitSystemMonitor
                 RegisterAppBar();
                 AlignToTaskbarCenter();
             }
+        }
+
+        private void EnsureAttachedToTaskbar()
+        {
+            IntPtr taskbarHwnd = Win32Helper.FindWindow("Shell_TrayWnd", null!);
+            if (taskbarHwnd == IntPtr.Zero || Win32Helper.GetWindowLongPtr(_hWnd, Win32Helper.GWL_HWNDPARENT) == taskbarHwnd) return;
+
+            _appbarRegistered = false; // a new Explorer instance has no record of our appbar
+            AttachToTaskbar();
+            // Changing the owner does not reorder windows; lift the overlay above the taskbar now.
+            SetWindowPos(_hWnd, Win32Helper.HWND_TOPMOST, 0, 0, 0, 0, Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
         }
 
         private void RegisterAppBar() { if (_appbarRegistered || _hWnd == IntPtr.Zero) return; APPBARDATA abd = new APPBARDATA { cbSize = Marshal.SizeOf(typeof(APPBARDATA)), hWnd = _hWnd, uCallbackMessage = WM_APPBAR_CALLBACK }; SHAppBarMessage(ABM_NEW, ref abd); _appbarRegistered = true; }
@@ -682,6 +698,7 @@ namespace Kil0bitSystemMonitor
             }
             if (msg == WM_WINDOWPOSCHANGED) { if (_appbarRegistered) { APPBARDATA abd = new APPBARDATA { cbSize = Marshal.SizeOf(typeof(APPBARDATA)), hWnd = _hWnd }; SHAppBarMessage(ABM_WINDOWPOSCHANGED, ref abd); } return IntPtr.Zero; }
             if (msg == WM_APPBAR_CALLBACK) { if ((uint)wParam.ToInt32() == ABN_FULLSCREENAPP) { _shellFullscreen = (lParam != IntPtr.Zero); _dispatcher.BeginInvoke(UpdateVisibility); } return IntPtr.Zero; }
+            if (_taskbarCreatedMsg != 0 && msg == _taskbarCreatedMsg) { if (_config.Config.StickToTaskbar) EnsureAttachedToTaskbar(); return IntPtr.Zero; }
             if (msg == WM_EXITSIZEMOVE) { if (Win32Helper.GetWindowRect(hWnd, out Win32Helper.RECT r)) { _config.Config.X = r.Left; _config.Config.Y = r.Top; _config.SaveConfig(); } }
             if (msg == WM_SHOW_SETTINGS) { _dispatcher.BeginInvoke(() => App.OpenSettings(_viewModel, _config)); return IntPtr.Zero; }
             if (msg == WM_DPICHANGED) { _currentDpi = (uint)(wParam.ToInt32() & 0xFFFF); _dpiScale = _currentDpi / 96.0f; ClearCaches(); AlignToTaskbarCenter(); UpdateLayer(); return IntPtr.Zero; }
