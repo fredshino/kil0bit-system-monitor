@@ -465,7 +465,9 @@ namespace Kil0bitSystemMonitor
 
         // Reserve: worst-case string to measure for stable column width. Null = use live Value width.
         // Section: colour section for this row when it differs from its tile's (e.g. VRAM inside the memory tile).
-        private class MetricItem { public string Label { get; set; } = ""; public string Value { get; set; } = ""; public string? Reserve { get; set; } = null; public int? Section { get; set; } = null; }
+        // Extra: optional second value drawn in its own right-aligned column after Value (e.g. "38%" after "11.9/31.6 GB");
+        // ExtraReserve is its worst-case string, like Reserve.
+        private class MetricItem { public string Label { get; set; } = ""; public string Value { get; set; } = ""; public string? Reserve { get; set; } = null; public int? Section { get; set; } = null; public string? Extra { get; set; } = null; public string? ExtraReserve { get; set; } = null; }
 
         private void UpdateLayer()
         {
@@ -489,16 +491,21 @@ namespace Kil0bitSystemMonitor
             float LabelW(MetricItem? item) => item == null ? 0 : GetCachedMeasure(item.Label, font);
             // Use the reserve string width when available so the tile never resizes on value change
             float ValueW(MetricItem? item) => item == null ? 0 : GetCachedMeasure(item.Reserve ?? item.Value, font);
+            // Optional second value column (memory tile: GB then percent), separated from the first by extraGap
+            float ExtraW(MetricItem? item) => item?.Extra == null ? 0 : GetCachedMeasure(item.ExtraReserve ?? item.Extra, font);
+            float extraGap = 3 * scale;
 
             float[] widths = new float[columns.Count];
             float[] labelCols = new float[columns.Count];
             float[] valueCols = new float[columns.Count];
+            float[] extraCols = new float[columns.Count];
             float total = 2 * scale;                         // left outer margin
             for (int i = 0; i < columns.Count; i++)
             {
                 var col = columns[i];
                 labelCols[i] = Math.Max(LabelW(col.Top), LabelW(col.Bottom));
-                valueCols[i] = Math.Max(ValueW(col.Top), ValueW(col.Bottom));
+                extraCols[i] = Math.Max(ExtraW(col.Top), ExtraW(col.Bottom));
+                valueCols[i] = Math.Max(ValueW(col.Top), ValueW(col.Bottom)) + (extraCols[i] > 0 ? extraGap + extraCols[i] : 0);
                 widths[i] = labelCols[i] + (labelCols[i] > 0 && valueCols[i] > 0 ? gap : 0) + valueCols[i] + (pad * 2);
 
                 total += widths[i] + podGap;
@@ -546,6 +553,8 @@ namespace Kil0bitSystemMonitor
                 float contentX = cx + pad;
                 float labelCol = labelCols[i];
                 float valueRight = contentX + labelCol + (labelCol > 0 && valueCols[i] > 0 ? gap : 0) + valueCols[i];
+                // Rows with an Extra end their Value before the extra column; rows without one (e.g. VRAM "N/A") use the full width
+                float mainRight = extraCols[i] > 0 ? valueRight - extraCols[i] - extraGap : valueRight;
                 // Fix: calculate y positions so both text rows are fully contained within h
                 float lineH = font.Height;
                 float totalTextH = lineH * 2 + (2 * scale);
@@ -556,7 +565,10 @@ namespace Kil0bitSystemMonitor
                 Action<MetricItem, float> drawItem = (item, y) => {
                     int section = item.Section ?? tileSection;
                     if (item.Label.Length > 0) _offscreenGraphics.DrawString(item.Label, font, LabelBrush(section), contentX, y);
-                    if (item.Value.Length > 0) _offscreenGraphics.DrawString(item.Value, font, ValueBrush(section), valueRight - GetCachedMeasure(item.Value, font), y);
+                    bool hasExtra = !string.IsNullOrEmpty(item.Extra);
+                    float right = hasExtra ? mainRight : valueRight;
+                    if (item.Value.Length > 0) _offscreenGraphics.DrawString(item.Value, font, ValueBrush(section), right - GetCachedMeasure(item.Value, font), y);
+                    if (hasExtra) _offscreenGraphics.DrawString(item.Extra!, font, ValueBrush(section), valueRight - GetCachedMeasure(item.Extra!, font), y);
                 };
 
                 if (col.Top != null && col.Bottom != null)
@@ -607,7 +619,9 @@ namespace Kil0bitSystemMonitor
             MetricItem? cpuUsage = c.ShowCpu ? Pct("CPU", "C", $"{(int)m.CpuUsage}%") : null;
             MetricItem? cpuTemp  = c.ShowCpuTemp ? Temp("TMP", "T", m.CpuTemperature > 0 ? $"{(int)m.CpuTemperature}°" : "N/A") : null;
             // "Memory Format" (config key VramDisplayStyle) applies to both rows of the memory tile so they line up
-            bool usedTotal = (c.VramDisplayStyle ?? "Percent") == "Used / Total";
+            string memFormat = c.VramDisplayStyle ?? "Percent";
+            bool withPercent = memFormat == "Used / Total + Percent";   // GB and percent side by side
+            bool usedTotal = withPercent || memFormat == "Used / Total";
             MetricItem? ram = null;
             if (c.ShowRam)
             {
@@ -615,7 +629,8 @@ namespace Kil0bitSystemMonitor
                 {
                     float usedGb = m.RamUsedBytes / 1073741824f;
                     float totalGb = m.RamTotalBytes / 1073741824f;
-                    ram = new MetricItem { Label = compact ? "R" : "RAM", Value = $"{usedGb:F1}/{totalGb:F1} GB", Reserve = $"{totalGb:F1}/{totalGb:F1} GB" };
+                    ram = new MetricItem { Label = compact ? "R" : "RAM", Value = $"{usedGb:F1}/{totalGb:F1} GB", Reserve = $"{totalGb:F1}/{totalGb:F1} GB",
+                                           Extra = withPercent ? $"{(int)m.RamPercent}%" : null, ExtraReserve = "100%" };
                 }
                 else ram = Pct("RAM", "R", $"{(int)m.RamPercent}%");
             }
@@ -628,7 +643,8 @@ namespace Kil0bitSystemMonitor
                     float usedGb = m.VramUsedBytes / 1073741824f;
                     float totalGb = m.VramTotalBytes / 1073741824f;
                     // Reserve the used field at full capacity so the tile never resizes
-                    vram = new MetricItem { Label = compact ? "V" : "VRAM", Value = $"{usedGb:F1}/{totalGb:F1} GB", Reserve = $"{totalGb:F1}/{totalGb:F1} GB", Section = SectionGpu };
+                    vram = new MetricItem { Label = compact ? "V" : "VRAM", Value = $"{usedGb:F1}/{totalGb:F1} GB", Reserve = $"{totalGb:F1}/{totalGb:F1} GB", Section = SectionGpu,
+                                            Extra = withPercent ? $"{(int)m.VramPercent}%" : null, ExtraReserve = "100%" };
                 }
                 else
                 {
