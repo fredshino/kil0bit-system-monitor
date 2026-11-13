@@ -13,6 +13,7 @@ namespace Kil0bitSystemMonitor.Models
     public class SystemMetrics
     {
         public float CpuUsage { get; set; }
+        public float CpuTemperature { get; set; } = -1; // °C; -1 = unavailable
         public float RamPercent { get; set; }
         public float GpuUsage { get; set; }
         public float GpuTemperature { get; set; }
@@ -38,6 +39,7 @@ namespace Kil0bitSystemMonitor.Models
         private bool _showGpu = true;
         private bool _showTemp = true;
         private bool _showVram = false;
+        private bool _showCpuTemp = false; // opt-in: needs administrator rights and the PawnIO driver
         private bool _showDisk = true;
         private bool _showDiskSpeed = true;
         private bool _showNetUp = true;
@@ -87,6 +89,7 @@ namespace Kil0bitSystemMonitor.Models
         public bool ShowGpu { get => _showGpu; set => SetField(ref _showGpu, value); }
         public bool ShowTemp { get => _showTemp; set => SetField(ref _showTemp, value); }
         public bool ShowVram { get => _showVram; set => SetField(ref _showVram, value); }
+        public bool ShowCpuTemp { get => _showCpuTemp; set => SetField(ref _showCpuTemp, value); }
         public bool ShowDisk { get => _showDisk; set => SetField(ref _showDisk, value); }
         public bool ShowDiskSpeed { get => _showDiskSpeed; set => SetField(ref _showDiskSpeed, value); }
         public bool ShowNetUp { get => _showNetUp; set => SetField(ref _showNetUp, value); }

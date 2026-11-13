@@ -45,6 +45,7 @@ namespace Kil0bitSystemMonitor.Services
         // and the ADL handle, which are not thread-safe. Never taken on the UI thread except in Dispose.
         private readonly object _sync = new();
         private volatile bool _disposed;
+        private CpuTemperatureReader? _cpuTemperature;
 
         public event Action<SystemMetrics>? MetricsUpdated;
 
@@ -168,6 +169,7 @@ namespace Kil0bitSystemMonitor.Services
                         InitializeGpu();
                         InitializeDisk();
                         InitializeNetwork();
+                        InitializeCpuTemperature();
                         _lastNetTime = DateTime.Now;
                     }
 
@@ -490,6 +492,17 @@ namespace Kil0bitSystemMonitor.Services
             catch { return null; }
         }
 
+        private void InitializeCpuTemperature()
+        {
+            try { _cpuTemperature?.Dispose(); } catch { }
+            _cpuTemperature = null;
+            // PawnIO refuses non-elevated callers, so don't load the driver client unless it can work
+            if (!_config.Config.ShowCpuTemp || !Kil0bitSystemMonitor.Helpers.Elevation.IsElevated
+                || !Kil0bitSystemMonitor.Helpers.Elevation.IsPawnIoInstalled()) return;
+            try { _cpuTemperature = new CpuTemperatureReader(); }
+            catch { _cpuTemperature = null; }
+        }
+
         private void InitializeNetwork()
         {
             var stats = GetNetworkStats();
@@ -538,6 +551,11 @@ namespace Kil0bitSystemMonitor.Services
 
             // CPU
             metrics.CpuUsage = _cpuCounter.NextValue();
+            if (_cpuTemperature != null)
+            {
+                try { metrics.CpuTemperature = _cpuTemperature.Read(); }
+                catch { metrics.CpuTemperature = -1; }
+            }
 
             // RAM
             var memStatus = new MEMORYSTATUSEX();
@@ -691,6 +709,10 @@ namespace Kil0bitSystemMonitor.Services
             if (e.PropertyName == nameof(_config.Config.ShowVram))
             {
                 QueueReinitialize(InitializeVram);
+            }
+            if (e.PropertyName == nameof(_config.Config.ShowCpuTemp))
+            {
+                QueueReinitialize(InitializeCpuTemperature);
             }
         }
 
@@ -1112,6 +1134,7 @@ namespace Kil0bitSystemMonitor.Services
                 foreach (var c in _gpuCounters.Values) c.Dispose();
                 _vramCounter?.Dispose();
                 _adlService?.Dispose();
+                _cpuTemperature?.Dispose();
             }
             catch { }
             finally

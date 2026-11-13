@@ -56,7 +56,20 @@ namespace Kil0bitSystemMonitor
             if (m_overlay != null) return;
             
             var config = new Kil0bitSystemMonitor.Services.ConfigService();
-            
+
+            string[] args = System.Environment.GetCommandLineArgs();
+            bool isStartup = System.Linq.Enumerable.Contains(args, "--startup");
+
+            // CPU temperature needs an elevated process (PawnIO). Ask UAC once per start instead of registering an
+            // auto-elevating logon task: the exe lives in a user-writable folder, so such a task would let any
+            // process running as this user swap the binary and get silent admin rights.
+            if (config.Config.ShowCpuTemp && !Kil0bitSystemMonitor.Helpers.Elevation.IsElevated
+                && Kil0bitSystemMonitor.Helpers.Elevation.IsPawnIoInstalled()
+                && RelaunchElevated(openSettings: !isStartup))
+            {
+                return; // the elevated instance takes over; declining UAC keeps this one running without CPU temperature
+            }
+
             m_dummyWindow = new Window();
             m_dummyWindow.Title = "Kil0bit System Monitor Host";
             m_dummyWindow.Width = 0;
@@ -81,8 +94,6 @@ namespace Kil0bitSystemMonitor
             
             m_overlay = new OverlayWindow(viewModel, config, m_telemetry);
 
-            string[] args = System.Environment.GetCommandLineArgs();
-            bool isStartup = System.Linq.Enumerable.Contains(args, "--startup");
             if (!isStartup)
             {
                 OpenSettings(viewModel, config);
@@ -130,7 +141,12 @@ namespace Kil0bitSystemMonitor
 
         // Relaunches this executable and exits; returns false if the relaunch could not start. The single-instance
         // mutex is released first, otherwise the new instance would only signal this one and quit.
-        public static bool Restart(bool openSettings)
+        public static bool Restart(bool openSettings) => Relaunch(openSettings, elevated: false);
+
+        // Same, through a UAC prompt; returns false if the user declines it
+        public static bool RelaunchElevated(bool openSettings) => Relaunch(openSettings, elevated: true);
+
+        private static bool Relaunch(bool openSettings, bool elevated)
         {
             string? exe = Environment.ProcessPath;
             if (exe == null) return false;
@@ -140,11 +156,17 @@ namespace Kil0bitSystemMonitor
             s_mutex = null;
             try
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe)
+                var startInfo = new System.Diagnostics.ProcessStartInfo(exe) { Arguments = openSettings ? "" : "--startup" };
+                if (elevated)
                 {
-                    UseShellExecute = false,
-                    Arguments = openSettings ? "" : "--startup"
-                });
+                    startInfo.UseShellExecute = true;
+                    startInfo.Verb = "runas";
+                }
+                else
+                {
+                    startInfo.UseShellExecute = false; // inherits this process's token, elevated or not
+                }
+                System.Diagnostics.Process.Start(startInfo);
             }
             catch
             {

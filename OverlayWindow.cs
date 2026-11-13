@@ -134,6 +134,14 @@ namespace Kil0bitSystemMonitor
                 _hWnd = CreateWindowEx(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "Kil0bitOverlayWndClass_Main", "Kil0bit System Monitor Overlay", WS_POPUP, x, y, 300, 32, IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
                 if (_hWnd == IntPtr.Zero) throw new Exception("Failed to create window");
 
+                // When elevated (CPU temperature), UIPI drops these from lower-integrity senders: Explorer's appbar,
+                // fullscreen and taskbar-recreated notifications, and a non-elevated second launch asking to open
+                // Settings. None of them carries data the overlay trusts beyond "re-check" or "show Settings".
+                foreach (uint allowed in new[] { (uint)WM_SHOW_SETTINGS, WM_APPBAR_CALLBACK, _taskbarCreatedMsg, (uint)WM_SETTINGCHANGE })
+                {
+                    if (allowed != 0) ChangeWindowMessageFilterEx(_hWnd, allowed, MSGFLT_ALLOW, IntPtr.Zero);
+                }
+
                 if (_hIcon != IntPtr.Zero) { SendMessage(_hWnd, WM_SETICON, (IntPtr)ICON_BIG, _hIcon); SendMessage(_hWnd, WM_SETICON, (IntPtr)ICON_SMALL, _hIcon); }
 
                 _currentDpi = GetDpiForWindow(_hWnd);
@@ -596,6 +604,9 @@ namespace Kil0bitSystemMonitor
             if (c.ShowCpu || c.ShowRam)
                 list.Add((c.ShowCpu ? Pct("CPU", "C", $"{(int)m.CpuUsage}%") : null, c.ShowRam ? Pct("RAM", "R", $"{(int)m.RamPercent}%") : null, SectionCpuRam));
 
+            if (c.ShowCpuTemp)
+                list.Add((Temp("CTMP", "CT", m.CpuTemperature > 0 ? $"{(int)m.CpuTemperature}°" : "N/A"), null, SectionCpuRam));
+
             string tempStr = m.GpuTemperature > 0 ? $"{(int)m.GpuTemperature}°" : "N/A";
             if (c.ShowGpu || c.ShowTemp)
                 list.Add((c.ShowGpu ? Pct("GPU", "G", $"{(int)m.GpuUsage}%") : null, c.ShowTemp ? Temp("TMP", "T", tempStr) : null, SectionGpu));
@@ -794,6 +805,8 @@ namespace Kil0bitSystemMonitor
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern ushort RegisterClassEx(ref WNDCLASSEX wc);
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(int ex, string cl, string nm, uint st, int x, int y, int w, int h, IntPtr p, IntPtr m, IntPtr i, IntPtr lp);
         [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr ha, int x, int y, int cx, int cy, uint f);
+        [DllImport("user32.dll")] static extern bool ChangeWindowMessageFilterEx(IntPtr hWnd, uint message, uint action, IntPtr pChangeFilterStruct);
+        private const uint MSGFLT_ALLOW = 1;
         [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
         [DllImport("user32.dll")] static extern IntPtr DefWindowProc(IntPtr h, uint m, IntPtr w, IntPtr l);
         [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint c);

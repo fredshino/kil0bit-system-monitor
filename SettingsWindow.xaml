@@ -367,7 +367,7 @@
                                                     <TextBlock Text="CPU Usage" VerticalAlignment="Center" Opacity="0.8"/>
                                                     <ui:ToggleSwitch Grid.Column="1" IsOn="{Binding Config.ShowCpu, Mode=TwoWay}" OnContent="" OffContent="" Margin="10,0,0,0" />
                                                 </Grid>
-                                                <Grid>
+                                                <Grid Margin="0,0,0,12">
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="130" />
                                                         <ColumnDefinition Width="Auto" />
@@ -375,6 +375,15 @@
                                                     <TextBlock Text="RAM Usage" VerticalAlignment="Center" Opacity="0.8"/>
                                                     <ui:ToggleSwitch Grid.Column="1" IsOn="{Binding Config.ShowRam, Mode=TwoWay}" OnContent="" OffContent="" Margin="10,0,0,0" />
                                                 </Grid>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="130" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="CPU Temperature" VerticalAlignment="Center" Opacity="0.8"/>
+                                                    <ui:ToggleSwitch x:Name="CpuTempToggle" Grid.Column="1" IsOn="{Binding Config.ShowCpuTemp, Mode=TwoWay}" Toggled="CpuTempToggle_Toggled" OnContent="" OffContent="" Margin="10,0,0,0" />
+                                                </Grid>
+                                                <TextBlock Text="Runs the app as administrator and needs the PawnIO driver (installed by FanControl or LibreHardwareMonitor)." TextWrapping="Wrap" FontSize="11.5" Opacity="0.55" Margin="0,6,0,0"/>
                                             </StackPanel>
 
                                             <StackPanel Grid.Column="2">
