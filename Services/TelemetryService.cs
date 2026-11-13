@@ -563,6 +563,8 @@ namespace Kil0bitSystemMonitor.Services
             {
                 ulong used = memStatus.ullTotalPhys - memStatus.ullAvailPhys;
                 metrics.RamPercent = (float)used / memStatus.ullTotalPhys * 100f;
+                metrics.RamUsedBytes = used;
+                metrics.RamTotalBytes = memStatus.ullTotalPhys;
             }
 
             // GPU

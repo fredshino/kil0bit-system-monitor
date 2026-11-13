@@ -606,12 +606,24 @@ namespace Kil0bitSystemMonitor
             // single CPU/RAM tile (the classic layout).
             MetricItem? cpuUsage = c.ShowCpu ? Pct("CPU", "C", $"{(int)m.CpuUsage}%") : null;
             MetricItem? cpuTemp  = c.ShowCpuTemp ? Temp("TMP", "T", m.CpuTemperature > 0 ? $"{(int)m.CpuTemperature}°" : "N/A") : null;
-            MetricItem? ram      = c.ShowRam ? Pct("RAM", "R", $"{(int)m.RamPercent}%") : null;
+            // "Memory Format" (config key VramDisplayStyle) applies to both rows of the memory tile so they line up
+            bool usedTotal = (c.VramDisplayStyle ?? "Percent") == "Used / Total";
+            MetricItem? ram = null;
+            if (c.ShowRam)
+            {
+                if (usedTotal && c.ShowVram && m.RamTotalBytes > 0)
+                {
+                    float usedGb = m.RamUsedBytes / 1073741824f;
+                    float totalGb = m.RamTotalBytes / 1073741824f;
+                    ram = new MetricItem { Label = compact ? "R" : "RAM", Value = $"{usedGb:F1}/{totalGb:F1} GB", Reserve = $"{totalGb:F1}/{totalGb:F1} GB" };
+                }
+                else ram = Pct("RAM", "R", $"{(int)m.RamPercent}%");
+            }
             MetricItem? vram     = null;
             if (c.ShowVram)
             {
                 // VRAM keeps the GPU section colours inside the memory tile
-                if (m.VramTotalBytes > 0 && (c.VramDisplayStyle ?? "Percent") == "Used / Total")
+                if (m.VramTotalBytes > 0 && usedTotal)
                 {
                     float usedGb = m.VramUsedBytes / 1073741824f;
                     float totalGb = m.VramTotalBytes / 1073741824f;
