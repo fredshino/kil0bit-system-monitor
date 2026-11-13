@@ -35,6 +35,9 @@ namespace Kil0bitSystemMonitor
         private System.Collections.Generic.List<string> _diskSelectionOrder = new();
         private bool _isNavigating = false;
 
+        // Set when the window failed to build (e.g. XAML could not load an assembly); it would otherwise show empty
+        public Exception? LoadError { get; private set; }
+
         public SettingsWindow(MainViewModel viewModel, ConfigService config)
         {
             _viewModel = viewModel;
@@ -55,6 +58,7 @@ namespace Kil0bitSystemMonitor
             }
             catch (Exception ex)
             {
+                LoadError = ex;
                 System.Diagnostics.Debug.WriteLine($"SettingsWindow Init Error: {ex.Message}");
             }
         }
