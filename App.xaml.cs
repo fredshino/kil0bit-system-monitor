@@ -21,6 +21,7 @@ namespace Kil0bitSystemMonitor
         private OverlayWindow? m_overlay;
         private Kil0bitSystemMonitor.Services.TelemetryService? m_telemetry;
         private static System.Threading.Mutex? s_mutex;
+        private const string SingleInstanceMutexName = "Local\\Kil0bitSystemMonitor_SingleInstance_Mutex";
         public static SettingsWindow? SettingsWindow { get; private set; }
 
         [DllImport("user32.dll", SetLastError = true)]
@@ -37,7 +38,7 @@ namespace Kil0bitSystemMonitor
 
             // Robust single-instance check using Mutex
             bool createdNew;
-            s_mutex = new System.Threading.Mutex(true, "Local\\Kil0bitSystemMonitor_SingleInstance_Mutex", out createdNew);
+            s_mutex = new System.Threading.Mutex(true, SingleInstanceMutexName, out createdNew);
             
             if (!createdNew)
             {
@@ -98,9 +99,61 @@ namespace Kil0bitSystemMonitor
                 return;
             }
 
-            SettingsWindow = new SettingsWindow(viewModel, config);
+            if (Kil0bitSystemMonitor.Helpers.RuntimeHealth.WasRuntimeRemoved())
+            {
+                // Settings would fail to load; relaunch on the current runtime; the new instance opens Settings
+                if (!Restart(openSettings: true))
+                {
+                    System.Windows.MessageBox.Show(
+                        ".NET was updated while Kil0bit System Monitor was running, so Settings cannot load.\n\nExit the app from its right-click menu and start it again.",
+                        "Kil0bit System Monitor", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+                return;
+            }
+
+            var window = new SettingsWindow(viewModel, config);
+            if (window.LoadError != null)
+            {
+                // Don't show an empty window: say what failed and offer the restart that usually fixes it
+                window.Close();
+                var answer = System.Windows.MessageBox.Show(
+                    $"Settings could not be opened:\n\n{window.LoadError.Message}\n\nRestart Kil0bit System Monitor and try again?",
+                    "Kil0bit System Monitor", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                if (answer == MessageBoxResult.Yes) Restart(openSettings: true);
+                return;
+            }
+
+            SettingsWindow = window;
             SettingsWindow.Closed += (s, e) => { SettingsWindow = null; };
             SettingsWindow.Show();
+        }
+
+        // Relaunches this executable and exits; returns false if the relaunch could not start. The single-instance
+        // mutex is released first, otherwise the new instance would only signal this one and quit.
+        public static bool Restart(bool openSettings)
+        {
+            string? exe = Environment.ProcessPath;
+            if (exe == null) return false;
+
+            try { s_mutex?.ReleaseMutex(); } catch { }
+            s_mutex?.Dispose();
+            s_mutex = null;
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe)
+                {
+                    UseShellExecute = false,
+                    Arguments = openSettings ? "" : "--startup"
+                });
+            }
+            catch
+            {
+                // Could not relaunch: keep running, and keep owning the single-instance mutex
+                s_mutex = new System.Threading.Mutex(true, SingleInstanceMutexName, out _);
+                return false;
+            }
+            Current.Shutdown();
+            return true;
         }
 
         protected override void OnExit(ExitEventArgs e)
