@@ -549,7 +549,7 @@
                                             <ComboBoxItem Content="Compact" />
                                         </ComboBox>
 
-                                        <TextBlock Text="VRAM Format" FontWeight="SemiBold" FontSize="12" Opacity="0.7" Margin="0,0,0,8"/>
+                                        <TextBlock Text="Memory Format (RAM &amp; VRAM)" FontWeight="SemiBold" FontSize="12" Opacity="0.7" Margin="0,0,0,8"/>
                                         <ComboBox SelectedValue="{Binding Config.VramDisplayStyle, Mode=TwoWay}" SelectedValuePath="Content" HorizontalAlignment="Stretch" Margin="0,0,0,16">
                                             <ComboBoxItem Content="Percent" />
                                             <ComboBoxItem Content="Used / Total" />

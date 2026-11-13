@@ -464,7 +464,8 @@ namespace Kil0bitSystemMonitor
         }
 
         // Reserve: worst-case string to measure for stable column width. Null = use live Value width.
-        private class MetricItem { public string Label { get; set; } = ""; public string Value { get; set; } = ""; public string? Reserve { get; set; } = null; }
+        // Section: colour section for this row when it differs from its tile's (e.g. VRAM inside the memory tile).
+        private class MetricItem { public string Label { get; set; } = ""; public string Value { get; set; } = ""; public string? Reserve { get; set; } = null; public int? Section { get; set; } = null; }
 
         private void UpdateLayer()
         {
@@ -483,21 +484,22 @@ namespace Kil0bitSystemMonitor
             float podGap = Math.Max(0, _config.Config.ColumnSpacing) * scale;  // user-controlled column spacing
             float pad = (pods ? 4 : 0) * scale;             // pod inner horizontal padding
 
+            // Each tile is a two-column table: labels left-aligned in a shared label column, values right-aligned
+            // in a value column sized by the widest reserve string, so digits and units line up between rows.
+            float LabelW(MetricItem? item) => item == null ? 0 : GetCachedMeasure(item.Label, font);
+            // Use the reserve string width when available so the tile never resizes on value change
+            float ValueW(MetricItem? item) => item == null ? 0 : GetCachedMeasure(item.Reserve ?? item.Value, font);
+
             float[] widths = new float[columns.Count];
+            float[] labelCols = new float[columns.Count];
+            float[] valueCols = new float[columns.Count];
             float total = 2 * scale;                         // left outer margin
             for (int i = 0; i < columns.Count; i++)
             {
                 var col = columns[i];
-                float GetItemWidth(MetricItem? item) {
-                    if (item == null) return 0;
-                    // Use the reserve string width when available so the column never resizes on value change
-                    float valW = item.Reserve != null ? GetCachedMeasure(item.Reserve, font) : GetCachedMeasure(item.Value, font);
-                    float lblW = GetCachedMeasure(item.Label, font);
-                    // No gap when the row is label-only or value-only (e.g. the VRAM column)
-                    return lblW + (lblW > 0 && valW > 0 ? gap : 0) + valW;
-                }
-
-                widths[i] = Math.Max(GetItemWidth(col.Top), GetItemWidth(col.Bottom)) + (pad * 2);
+                labelCols[i] = Math.Max(LabelW(col.Top), LabelW(col.Bottom));
+                valueCols[i] = Math.Max(ValueW(col.Top), ValueW(col.Bottom));
+                widths[i] = labelCols[i] + (labelCols[i] > 0 && valueCols[i] > 0 ? gap : 0) + valueCols[i] + (pad * 2);
 
                 total += widths[i] + podGap;
             }
@@ -537,27 +539,24 @@ namespace Kil0bitSystemMonitor
                     { _offscreenGraphics.FillPath(pBrush, path); _offscreenGraphics.DrawPath(pPen, path); }
                 }
 
-                // Pick the correct label and accent brushes for this column's section
-                Brush sectionLBrush = col.Section == SectionNet    ? netLBrush
-                                    : col.Section == SectionCpuRam ? cpuLBrush
-                                    : col.Section == SectionGpu    ? gpuLBrush
-                                    : dskLBrush;
-                Brush sectionVBrush = col.Section == SectionNet    ? netVBrush
-                                    : col.Section == SectionCpuRam ? cpuVBrush
-                                    : col.Section == SectionGpu    ? gpuVBrush
-                                    : dskVBrush;
+                // Pick the label and accent brushes for a row's section (rows may override their tile's section)
+                Brush LabelBrush(int section) => section == SectionNet ? netLBrush : section == SectionCpuRam ? cpuLBrush : section == SectionGpu ? gpuLBrush : dskLBrush;
+                Brush ValueBrush(int section) => section == SectionNet ? netVBrush : section == SectionCpuRam ? cpuVBrush : section == SectionGpu ? gpuVBrush : dskVBrush;
 
                 float contentX = cx + pad;
+                float labelCol = labelCols[i];
+                float valueRight = contentX + labelCol + (labelCol > 0 && valueCols[i] > 0 ? gap : 0) + valueCols[i];
                 // Fix: calculate y positions so both text rows are fully contained within h
                 float lineH = font.Height;
                 float totalTextH = lineH * 2 + (2 * scale);
                 float y1 = (h - totalTextH) / 2f;
                 float y2 = y1 + lineH + (2 * scale);
 
+                int tileSection = col.Section;
                 Action<MetricItem, float> drawItem = (item, y) => {
-                    float lw = GetCachedMeasure(item.Label, font);
-                    if (item.Label.Length > 0) _offscreenGraphics.DrawString(item.Label, font, sectionLBrush, contentX, y);
-                    if (item.Value.Length > 0) _offscreenGraphics.DrawString(item.Value, font, sectionVBrush, contentX + (lw > 0 ? lw + gap : 0), y);
+                    int section = item.Section ?? tileSection;
+                    if (item.Label.Length > 0) _offscreenGraphics.DrawString(item.Label, font, LabelBrush(section), contentX, y);
+                    if (item.Value.Length > 0) _offscreenGraphics.DrawString(item.Value, font, ValueBrush(section), valueRight - GetCachedMeasure(item.Value, font), y);
                 };
 
                 if (col.Top != null && col.Bottom != null)
@@ -601,35 +600,58 @@ namespace Kil0bitSystemMonitor
             if (c.ShowNetUp || c.ShowNetDown)
                 list.Add((c.ShowNetUp ? Net("UP ", "U", m.NetUpText) : null, c.ShowNetDown ? Net("DN ", "D", m.NetDownText) : null, SectionNet));
 
-            if (c.ShowCpu || c.ShowRam)
-                list.Add((c.ShowCpu ? Pct("CPU", "C", $"{(int)m.CpuUsage}%") : null, c.ShowRam ? Pct("RAM", "R", $"{(int)m.RamPercent}%") : null, SectionCpuRam));
+            // Tiles: CPU (usage over temperature), GPU (usage over temperature), memory (RAM over VRAM).
+            // The CPU and GPU tiles sit side by side because they share a layout. When neither CPU temperature
+            // nor VRAM is shown, each of the CPU and memory tiles would hold one metric, so they collapse into a
+            // single CPU/RAM tile (the classic layout).
+            MetricItem? cpuUsage = c.ShowCpu ? Pct("CPU", "C", $"{(int)m.CpuUsage}%") : null;
+            MetricItem? cpuTemp  = c.ShowCpuTemp ? Temp("TMP", "T", m.CpuTemperature > 0 ? $"{(int)m.CpuTemperature}°" : "N/A") : null;
+            // "Memory Format" (config key VramDisplayStyle) applies to both rows of the memory tile so they line up
+            bool usedTotal = (c.VramDisplayStyle ?? "Percent") == "Used / Total";
+            MetricItem? ram = null;
+            if (c.ShowRam)
+            {
+                if (usedTotal && c.ShowVram && m.RamTotalBytes > 0)
+                {
+                    float usedGb = m.RamUsedBytes / 1073741824f;
+                    float totalGb = m.RamTotalBytes / 1073741824f;
+                    ram = new MetricItem { Label = compact ? "R" : "RAM", Value = $"{usedGb:F1}/{totalGb:F1} GB", Reserve = $"{totalGb:F1}/{totalGb:F1} GB" };
+                }
+                else ram = Pct("RAM", "R", $"{(int)m.RamPercent}%");
+            }
+            MetricItem? vram     = null;
+            if (c.ShowVram)
+            {
+                // VRAM keeps the GPU section colours inside the memory tile
+                if (m.VramTotalBytes > 0 && usedTotal)
+                {
+                    float usedGb = m.VramUsedBytes / 1073741824f;
+                    float totalGb = m.VramTotalBytes / 1073741824f;
+                    // Reserve the used field at full capacity so the tile never resizes
+                    vram = new MetricItem { Label = compact ? "V" : "VRAM", Value = $"{usedGb:F1}/{totalGb:F1} GB", Reserve = $"{totalGb:F1}/{totalGb:F1} GB", Section = SectionGpu };
+                }
+                else
+                {
+                    vram = new MetricItem { Label = compact ? "V" : "VRAM", Value = m.VramTotalBytes > 0 ? $"{(int)m.VramPercent}%" : "N/A", Reserve = "100%", Section = SectionGpu };
+                }
+            }
 
-            if (c.ShowCpuTemp)
-                list.Add((Temp("CTMP", "CT", m.CpuTemperature > 0 ? $"{(int)m.CpuTemperature}°" : "N/A"), null, SectionCpuRam));
+            bool classicCpuRam = cpuTemp == null && vram == null;
+            if (classicCpuRam)
+            {
+                if (cpuUsage != null || ram != null) list.Add((cpuUsage, ram, SectionCpuRam));
+            }
+            else if (cpuUsage != null || cpuTemp != null)
+            {
+                list.Add((cpuUsage, cpuTemp, SectionCpuRam));
+            }
 
             string tempStr = m.GpuTemperature > 0 ? $"{(int)m.GpuTemperature}°" : "N/A";
             if (c.ShowGpu || c.ShowTemp)
                 list.Add((c.ShowGpu ? Pct("GPU", "G", $"{(int)m.GpuUsage}%") : null, c.ShowTemp ? Temp("TMP", "T", tempStr) : null, SectionGpu));
 
-            if (c.ShowVram)
-            {
-                // VRAM gets its own column: "VRAM" label on the top row, the value on the bottom row
-                // (requested by the maintainer on PR #50 so the wide used/total string doesn't stretch a label row).
-                MetricItem vramValue;
-                if (m.VramTotalBytes > 0 && (c.VramDisplayStyle ?? "Percent") == "Used / Total")
-                {
-                    float usedGb = m.VramUsedBytes / 1073741824f;
-                    float totalGb = m.VramTotalBytes / 1073741824f;
-                    // Reserve the used field at full capacity so the column never resizes
-                    vramValue = new MetricItem { Value = $"{usedGb:F1}/{totalGb:F1} GB", Reserve = $"{totalGb:F1}/{totalGb:F1} GB" };
-                }
-                else
-                {
-                    vramValue = new MetricItem { Value = m.VramTotalBytes > 0 ? $"{(int)m.VramPercent}%" : "N/A", Reserve = "100%" };
-                }
-                var vramLabel = new MetricItem { Label = compact ? "VRM" : "VRAM" };
-                list.Add((vramLabel, vramValue, SectionGpu));
-            }
+            if (!classicCpuRam && (ram != null || vram != null))
+                list.Add((ram, vram, SectionCpuRam));
 
             if (c.ShowDisk || c.ShowDiskSpeed)
             {
@@ -696,7 +718,8 @@ namespace Kil0bitSystemMonitor
             _cachedDiskAccentBrush   = string.IsNullOrEmpty(_config.Config.DiskAccentColorHex)   ? null : new SolidBrush(HexToColor(_config.Config.DiskAccentColorHex));
         }
 
-        private float GetCachedMeasure(string t, Font f) { if (_offscreenGraphics == null) return 0; string k = $"{t}_{f.Name}_{f.Size}_{f.Style}"; if (!_measureCache.TryGetValue(k, out var w)) { w = _offscreenGraphics.MeasureString(t, f, PointF.Empty, StringFormat.GenericTypographic).Width; _measureCache[k] = w; } return w; }
+        // Live values are measured now (right alignment), so bound the cache: network speeds alone have thousands of strings
+        private float GetCachedMeasure(string t, Font f) { if (_offscreenGraphics == null) return 0; string k = $"{t}_{f.Name}_{f.Size}_{f.Style}"; if (!_measureCache.TryGetValue(k, out var w)) { if (_measureCache.Count > 4096) _measureCache.Clear(); w = _offscreenGraphics.MeasureString(t, f, PointF.Empty, StringFormat.GenericTypographic).Width; _measureCache[k] = w; } return w; }
         private void ClearCaches() { foreach (var f in _fontCache.Values) f.Dispose(); _fontCache.Clear(); _measureCache.Clear(); }
         private void SetBitmap(Bitmap bitmap)
         {

@@ -15,6 +15,8 @@ namespace Kil0bitSystemMonitor.Models
         public float CpuUsage { get; set; }
         public float CpuTemperature { get; set; } = -1; // °C; -1 = unavailable
         public float RamPercent { get; set; }
+        public ulong RamUsedBytes { get; set; }
+        public ulong RamTotalBytes { get; set; }
         public float GpuUsage { get; set; }
         public float GpuTemperature { get; set; }
         public float VramPercent { get; set; }
