@@ -1,6 +1,7 @@
 using System;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Interop;
 using System.Linq;
 using System.IO;
@@ -73,41 +74,44 @@ namespace Kil0bitSystemMonitor
                 var adapters = await System.Threading.Tasks.Task.Run(() => TelemetryService.GetAvailableNetworkAdapters());
 
                 Dispatcher.Invoke(() => {
-                    PopulateGpuList(gpus);
+                    MigrateLegacySelections();
+                    PopulateHardwareCombo(GpuAdapterCombo, gpus, _config.Config.GpuAdapter);
                     PopulateDiskList(disks);
-                    PopulateNetworkList(adapters);
+                    PopulateHardwareCombo(NetAdapterCombo, adapters, _config.Config.NetworkAdapter);
                     EnsureValidSelections();
                 });
             }
             catch { }
         }
 
-        private void PopulateNetworkList(System.Collections.Generic.List<string> adapters)
+        // The combo's SelectedValue is TwoWay-bound to the config. Repopulating it while bound writes back:
+        // Items.Clear() pushes null, and a configured device not yet in the list ends up replaced by "Default".
+        // Each write re-saves the config and re-initialises telemetry, and the user's choice is lost. So the
+        // binding is detached while the items are rebuilt, and re-attaching it selects the configured item.
+        private static void PopulateHardwareCombo(System.Windows.Controls.ComboBox combo, System.Collections.Generic.List<string> names, string? configured)
         {
+            var binding = BindingOperations.GetBindingBase(combo, System.Windows.Controls.Primitives.Selector.SelectedValueProperty);
+            BindingOperations.ClearBinding(combo, System.Windows.Controls.Primitives.Selector.SelectedValueProperty);
             try
             {
-                NetAdapterCombo.Items.Clear();
-                NetAdapterCombo.Items.Add(new ComboBoxItem { Content = "Default" });
-                foreach (var adapter in adapters)
+                combo.Items.Clear();
+                combo.Items.Add(new ComboBoxItem { Content = "Default" });
+                foreach (var name in names)
                 {
-                    NetAdapterCombo.Items.Add(new ComboBoxItem { Content = adapter });
+                    combo.Items.Add(new ComboBoxItem { Content = name });
+                }
+                // Keep a configured device that is not detected right now (unplugged, renamed adapter, legacy
+                // "Wi-Fi"/"Ethernet" filters) instead of silently resetting it
+                if (!string.IsNullOrEmpty(configured) && configured != "Default" && !names.Contains(configured))
+                {
+                    combo.Items.Add(new ComboBoxItem { Content = configured });
                 }
             }
             catch { }
-        }
-
-        private void PopulateGpuList(System.Collections.Generic.List<string> gpus)
-        {
-            try
+            finally
             {
-                GpuAdapterCombo.Items.Clear();
-                GpuAdapterCombo.Items.Add(new ComboBoxItem { Content = "Default" });
-                foreach (var gpu in gpus)
-                {
-                    GpuAdapterCombo.Items.Add(new ComboBoxItem { Content = gpu });
-                }
+                if (binding != null) combo.SetBinding(System.Windows.Controls.Primitives.Selector.SelectedValueProperty, binding);
             }
-            catch { }
         }
 
         private void PopulateDiskList(System.Collections.Generic.List<string> disks)
@@ -153,14 +157,22 @@ namespace Kil0bitSystemMonitor
             else _config.Config.SelectedDisks = string.Join(";", _diskSelectionOrder);
         }
 
-        private void EnsureValidSelections()
+        private void MigrateLegacySelections()
         {
             try
             {
                 if (_config.Config.NetworkAdapter == "All") _config.Config.NetworkAdapter = "Default";
                 if (_config.Config.GpuAdapter == "All") _config.Config.GpuAdapter = "Default";
                 if (_config.Config.SelectedDisks == "Default") _config.Config.SelectedDisks = "All";
+            }
+            catch { }
+        }
 
+        private void EnsureValidSelections()
+        {
+            try
+            {
+                // Only reached when the configured value is empty; PopulateHardwareCombo keeps any named device
                 if (NetAdapterCombo.SelectedIndex == -1 && NetAdapterCombo.Items.Count > 0) NetAdapterCombo.SelectedIndex = 0;
                 if (GpuAdapterCombo.SelectedIndex == -1 && GpuAdapterCombo.Items.Count > 0) GpuAdapterCombo.SelectedIndex = 0;
 
