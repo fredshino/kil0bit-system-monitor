@@ -41,6 +41,11 @@ namespace Kil0bitSystemMonitor.Services
         private ulong _vramTotalBytes;
         private DateTime _lastVramRefresh = DateTime.MinValue;
 
+        // Serialises (re)initialisation with metric updates: both touch the counters, the nvidia-smi reader
+        // and the ADL handle, which are not thread-safe. Never taken on the UI thread except in Dispose.
+        private readonly object _sync = new();
+        private volatile bool _disposed;
+
         public event Action<SystemMetrics>? MetricsUpdated;
 
         public static System.Collections.Generic.List<string> GetAvailableDisks()
@@ -156,24 +161,27 @@ namespace Kil0bitSystemMonitor.Services
             
             // Perform heavy initialization in background to keep UI thread free
             _ = System.Threading.Tasks.Task.Run(() => {
-                try 
+                try
                 {
-                    InitializeGpu();
-                    InitializeDisk();
-                    InitializeNetwork();
-                    _lastNetTime = DateTime.Now;
+                    lock (_sync)
+                    {
+                        InitializeGpu();
+                        InitializeDisk();
+                        InitializeNetwork();
+                        _lastNetTime = DateTime.Now;
+                    }
 
                     _timer = new System.Timers.Timer(_config.Config.UpdateInterval);
-                    _timer.AutoReset = false; 
+                    _timer.AutoReset = false;
                     _timer.Elapsed += (s, e) =>
                     {
-                        try   { UpdateMetrics(); }
-                        finally { _timer?.Start(); } 
+                        try   { lock (_sync) { if (!_disposed) UpdateMetrics(); } }
+                        finally { if (!_disposed) _timer?.Start(); }
                     };
                     _timer.Start();
 
                     // Perform first update immediately
-                    UpdateMetrics();
+                    lock (_sync) { if (!_disposed) UpdateMetrics(); }
                 }
                 catch { }
             });
@@ -449,24 +457,37 @@ namespace Kil0bitSystemMonitor.Services
         private System.Collections.Generic.List<string> GetNvidiaGpus()
         {
             var list = new System.Collections.Generic.List<string>();
+            string? output = RunNvidiaSmi("nvidia-smi", "--query-gpu=name --format=csv,noheader", 3000);
+            if (output != null)
+            {
+                foreach (var line in output.Split('\n'))
+                    if (!string.IsNullOrWhiteSpace(line)) list.Add(line.Trim());
+            }
+            return list;
+        }
+
+        // Runs a one-shot nvidia-smi query and returns stdout, or null on failure or timeout.
+        // ReadToEnd() before WaitForExit(timeout) would wait indefinitely on a hung nvidia-smi.
+        private static string? RunNvidiaSmi(string fileName, string arguments, int timeoutMs)
+        {
             try
             {
-                using (var process = new Process())
+                using var process = new Process();
+                process.StartInfo.FileName = fileName;
+                process.StartInfo.Arguments = arguments;
+                process.StartInfo.UseShellExecute = false;
+                process.StartInfo.RedirectStandardOutput = true;
+                process.StartInfo.CreateNoWindow = true;
+                process.Start();
+                var output = process.StandardOutput.ReadToEndAsync();
+                if (!process.WaitForExit(timeoutMs))
                 {
-                    process.StartInfo.FileName = "nvidia-smi";
-                    process.StartInfo.Arguments = "--query-gpu=name --format=csv,noheader";
-                    process.StartInfo.UseShellExecute = false;
-                    process.StartInfo.RedirectStandardOutput = true;
-                    process.StartInfo.CreateNoWindow = true;
-                    process.Start();
-                    string output = process.StandardOutput.ReadToEnd();
-                    process.WaitForExit(1000);
-                    foreach (var line in output.Split('\n')) 
-                        if (!string.IsNullOrWhiteSpace(line)) list.Add(line.Trim());
+                    try { process.Kill(); } catch { }
+                    return null;
                 }
+                return output.Wait(timeoutMs) ? output.Result : null;
             }
-            catch { }
-            return list;
+            catch { return null; }
         }
 
         private void InitializeNetwork()
@@ -650,28 +671,36 @@ namespace Kil0bitSystemMonitor.Services
 
 
 
+        // Raised on whichever thread changed the config — usually the UI thread via a settings binding.
+        // Re-initialisation spawns nvidia-smi and runs WMI and perf-counter enumeration, so it is queued
+        // off that thread rather than run inline (running it inline froze the settings window).
         private void Config_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
-            if (e.PropertyName == nameof(_config.Config.GpuAdapter))
+            if (e.PropertyName == nameof(_config.Config.GpuAdapter) || e.PropertyName == nameof(_config.Config.GpuIndex))
             {
-                InitializeGpu();
+                QueueReinitialize(InitializeGpu);
             }
             if (e.PropertyName == nameof(_config.Config.SelectedDisks))
             {
-                InitializeDisk();
+                QueueReinitialize(InitializeDisk);
             }
             if (e.PropertyName == nameof(_config.Config.UpdateInterval))
             {
                 if (_timer != null) _timer.Interval = _config.Config.UpdateInterval;
             }
-            if (e.PropertyName == nameof(_config.Config.GpuIndex))
-            {
-                InitializeGpu();
-            }
             if (e.PropertyName == nameof(_config.Config.ShowVram))
             {
-                InitializeVram();
+                QueueReinitialize(InitializeVram);
             }
+        }
+
+        private void QueueReinitialize(Action initialize)
+        {
+            _ = System.Threading.Tasks.Task.Run(() =>
+            {
+                try { lock (_sync) { if (!_disposed) initialize(); } }
+                catch { }
+            });
         }
 
         private void StartSmiReader()
@@ -843,21 +872,11 @@ namespace Kil0bitSystemMonitor.Services
                             }
                         }
 
-                        using (var process = new Process())
+                        string idArg = _nvidiaGlobalIndex >= 0 ? $" --id={_nvidiaGlobalIndex}" : "";
+                        string? output = RunNvidiaSmi(smiPath, $"--query-gpu=temperature.gpu --format=csv,noheader,nounits{idArg}", 2000);
+                        if (output != null && float.TryParse(output.Trim(), out float val))
                         {
-                            process.StartInfo.FileName = smiPath;
-                            string idArg = _nvidiaGlobalIndex >= 0 ? $" --id={_nvidiaGlobalIndex}" : "";
-                            process.StartInfo.Arguments = $"--query-gpu=temperature.gpu --format=csv,noheader,nounits{idArg}";
-                            process.StartInfo.UseShellExecute = false;
-                            process.StartInfo.RedirectStandardOutput = true;
-                            process.StartInfo.CreateNoWindow = true;
-                            process.Start();
-                            string output = process.StandardOutput.ReadToEnd();
-                            process.WaitForExit(1000);
-                            if (float.TryParse(output.Trim(), out float val))
-                            {
-                                temp = val;
-                            }
+                            temp = val;
                         }
                     }
                     catch { }
@@ -1076,8 +1095,13 @@ namespace Kil0bitSystemMonitor.Services
 
         public void Dispose()
         {
+            // Wait (bounded: nvidia-smi calls time out) for an in-flight update or re-init, so it cannot start
+            // a new nvidia-smi reader after StopSmiReader below and leave it running past exit
+            _disposed = true;
+            bool locked = false;
             try
             {
+                System.Threading.Monitor.TryEnter(_sync, 5000, ref locked);
                 // Unsubscribe first — prevents InitializeGpu/Disk being called on a disposed service
                 _config.Config.PropertyChanged -= Config_PropertyChanged;
                 _timer?.Stop();
@@ -1090,6 +1114,10 @@ namespace Kil0bitSystemMonitor.Services
                 _adlService?.Dispose();
             }
             catch { }
+            finally
+            {
+                if (locked) System.Threading.Monitor.Exit(_sync);
+            }
         }
     }
 }
