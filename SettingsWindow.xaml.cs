@@ -277,6 +277,30 @@ namespace Kil0bitSystemMonitor
 
 
 
+        private void CpuTempToggle_Toggled(object sender, RoutedEventArgs e)
+        {
+            // Ignore the initial binding (raised before Loaded) and switching the feature off
+            if (!IsLoaded || !CpuTempToggle.IsOn || Elevation.IsElevated) return;
+
+            if (!Elevation.IsPawnIoInstalled())
+            {
+                System.Windows.MessageBox.Show(this,
+                    "CPU temperature is read through the PawnIO driver, which isn't installed.\n\nInstall it from pawnio.eu, or install a tool that ships it, such as FanControl or LibreHardwareMonitor. Then turn this on again.",
+                    "CPU Temperature", MessageBoxButton.OK, MessageBoxImage.Information);
+                _config.Config.ShowCpuTemp = false;
+                return;
+            }
+
+            var answer = System.Windows.MessageBox.Show(this,
+                "Reading CPU temperature needs administrator rights, so Kil0bit System Monitor will run elevated while this is on. Windows will ask for permission each time the app starts.\n\nRestart as administrator now?",
+                "CPU Temperature", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            // Turn it back off if the user says no or declines the UAC prompt, so the toggle reflects what runs
+            if (answer != MessageBoxResult.Yes || !App.RelaunchElevated(openSettings: true))
+            {
+                _config.Config.ShowCpuTemp = false;
+            }
+        }
+
         private void ResetToDefaults_Click(object sender, RoutedEventArgs e)
         {
             var c = _config.Config;
@@ -328,6 +352,7 @@ namespace Kil0bitSystemMonitor
             c.ShowGpu = true;
             c.ShowTemp = true;
             c.ShowVram = false;
+            c.ShowCpuTemp = false;
             c.ShowDisk = true;
             c.ShowDiskSpeed = true;
             c.ShowNetUp = true;

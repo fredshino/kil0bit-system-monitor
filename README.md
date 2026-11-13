@@ -30,6 +30,7 @@ Kil0bit System Monitor is a modern successor to legacy taskbar monitors. It’s 
 - **🎨 Pixel-Perfect Design** — Glassmorphism, Mica effects, and fully customizable themes.
 - **🛡️ High-DPI Ready** — Precision rendering that looks sharp on 4K, Ultrawides, and multi-monitor setups.
 - **⚙️ Power-User Settings** — Customize sensors (CPU, GPU, Network, Disk), colors, and smart startup behavior.
+- **🌡️ CPU Temperature (opt-in)** — Package/die temperature (Tctl/Tdie on AMD) via [LibreHardwareMonitorLib](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor). It needs the [PawnIO](https://pawnio.eu) driver, which tools such as FanControl and LibreHardwareMonitor install, and administrator rights. While it's on, the app asks for UAC permission each time it starts. The app never installs a driver or an auto-elevating startup task.
 
 ---
 
@@ -102,6 +103,7 @@ The resulting executable will be in `kil0bit-system-monitor/bin/Release/net8.0-w
 | **Runtime** | .NET 8.0 |
 | **Graphics** | Win32 GDI+ (BitBlt, AlphaBlend) |
 | **Persistence** | JSON (`ConfigService`) |
+| **CPU temperature** | LibreHardwareMonitorLib (MPL-2.0); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) |
 
 ---
 
