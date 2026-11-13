@@ -11,8 +11,14 @@ namespace Kil0bitSystemMonitor
     {
         public App()
         {
+            // Settings is the only WPF content that renders (the overlay is drawn with GDI). With hardware
+            // rendering, switching Settings sections sent WPF's render thread into a loop inside the NVIDIA driver
+            // (~85% of a core in nvgpucomp64/win32u; the window stopped repainting until closed). Software
+            // rendering keeps a background monitor off the GPU entirely and is plenty for a static settings page.
+            System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
+
             this.InitializeComponent();
-            
+
             // Set a unique identity for the taskbar icon to bypass caching
             Kil0bitSystemMonitor.Helpers.Win32Helper.SetCurrentProcessExplicitAppUserModelID("Kil0bit.SystemMonitor.Main.v3");
         }
